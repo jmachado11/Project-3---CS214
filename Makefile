@@ -11,7 +11,10 @@ parser.o: parser.c shell.h
 builtins.o: builtins.c shell.h
 util.o: util.c shell.h
 
+test: mysh
+	bash tests/run_tests.sh
+
 clean:
 	rm -f mysh $(OBJ)
 
-.PHONY: clean
+.PHONY: clean test

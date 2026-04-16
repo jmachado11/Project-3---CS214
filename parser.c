@@ -215,6 +215,10 @@ int parse_job(const char *line, Job *job) {
     }
     free(args.items);
 
+    if (current.argv[0] != NULL && strcmp(current.argv[0], "exit") == 0) {
+        job->has_exit = true;
+    }
+
     if (append_command(job, &current) != 0) {
         command_free(&current);
         free_job(job);

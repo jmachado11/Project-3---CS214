@@ -1,0 +1,280 @@
+Project III: A Simple Shell
+CS 214 Spring 2026
+
+Authors
+Joshua Goykhman (jg1986)
+James Machado (jam1127)
+
+Overview
+This project implements a simple command-line shell called mysh. The shell reads and executes commands in both interactive and batch modes.
+
+When run with no arguments and standard input is a terminal, mysh runs in interactive mode. It prints a welcome message, displays a prompt showing the current working directory, and prints a goodbye message when it exits. When run with a file argument, or when standard input is not a terminal, mysh runs in batch mode with no prompts or messages.
+
+The shell supports:
+- Executing programs by searching /usr/local/bin, /usr/bin, and /bin
+- Executing programs by absolute or relative path
+- Built-in commands: cd, pwd, which, exit
+- Input and output redirection using < and >
+- Pipelines using |
+- Wildcard expansion using *
+- Comments beginning with #
+
+Compilation
+The project includes a Makefile. To compile:
+
+    make
+
+This produces the executable:
+
+    ./mysh
+
+To clean generated files:
+
+    make clean
+
+To build and run the test suite:
+
+    make test
+
+Usage
+Interactive mode:
+
+    ./mysh
+
+Batch mode with a file argument:
+
+    ./mysh script.sh
+
+Batch mode via piped input:
+
+    cat script.sh | ./mysh
+
+Program Behavior
+1. Input reading
+   - Uses read() to obtain input one byte at a time.
+   - Executes the command as soon as a newline is received, without reading further input.
+   - Uses a dynamically resized buffer so there is no fixed maximum command length.
+
+2. Tokenization and parsing
+   - Splits each line into tokens separated by whitespace.
+   - The characters <, >, and | are always treated as their own token.
+   - The character # begins a comment that continues to the end of the line.
+   - Tokens containing * are expanded as wildcards against the appropriate directory.
+   - Tokens following < or > are treated as redirection file paths and not added to the argument list.
+   - Tokens separated by | define separate subcommands in a pipeline.
+
+3. Command resolution
+   - If the command name contains a /, it is treated as a path to an executable.
+   - If the command name is cd, pwd, which, or exit, the corresponding built-in is executed.
+   - Otherwise, the shell searches /usr/local/bin, /usr/bin, and /bin in order using access().
+
+4. Execution
+   - External commands are executed using fork() and execv().
+   - Built-in commands are executed in the parent process when there is no pipeline.
+   - In a pipeline, all commands including builtins are executed in child processes.
+   - Pipes are created with pipe() and file descriptors are redirected using dup2().
+   - In batch mode, child processes receive /dev/null as standard input unless input redirection is specified.
+
+5. Interactive mode details
+   - Prints a welcome message on startup and a goodbye message on exit or end of input.
+   - The prompt is the current working directory followed by "$ ".
+   - If the working directory is under the home directory, the home directory portion is replaced by ~.
+   - After a command exits with a non-zero status, prints "Exited with status N".
+   - After a command is terminated by a signal, prints the signal number and description using strsignal().
+
+Design Notes
+
+1. Source file organization
+   - main.c: entry point, opens input source, detects interactive mode using isatty()
+   - shell.c: main loop, prompt formatting, input reading, command execution, pipeline management
+   - parser.c: tokenizer and command parser, handles redirection and pipe operators
+   - builtins.c: implementations of cd, pwd, which, and exit
+   - util.c: string list (dynamic array), path joining, program path search, wildcard matching and expansion
+
+2. Input reading strategy
+   The shell reads one byte at a time using read(). This ensures that in interactive mode the shell can execute a command immediately after receiving a newline without blocking on additional input. The input buffer is dynamically resized using realloc() when capacity is reached.
+
+3. Built-in commands with redirection
+   When a single built-in command uses redirection, the shell saves the original file descriptors using dup(), redirects using dup2(), runs the built-in, and then restores the original descriptors. This allows cd to change the working directory in the parent process even when output is redirected. In a pipeline, builtins are executed in a child process since the parent must remain to manage the pipe.
+
+4. Wildcard expansion
+   Wildcard tokens are expanded during parsing. The shell opens the target directory, tests each entry against the pattern, and collects matches into a temporary list. Matches are sorted using qsort() and then appended to the argument list. If no files match the pattern, the original token is kept unchanged. Patterns beginning with * do not match names that begin with a period.
+
+5. Error handling
+   The shell continues executing after command failures and syntax errors. Syntax errors cause the current command to be skipped. The shell itself always exits with EXIT_SUCCESS except when it cannot open the file specified as its argument.
+
+Testing Plan
+
+We tested mysh using batch-mode test scripts and manual interactive testing. The batch tests are in the tests/ directory. The test runner (tests/run_tests.sh) pipes input into mysh and compares the output against expected strings. It also runs mysh with file arguments to test the batch file code path.
+
+1. Build and basic execution tests
+   Purpose:
+   - Verify that the project compiles cleanly.
+   - Verify that the resulting executable runs.
+
+   Tests:
+   - Run make and confirm mysh is produced with no warnings.
+   - Run make clean and confirm that object files and executable are removed.
+   - Run ./mysh with no arguments and verify interactive mode starts.
+
+2. Basic command execution tests
+   Purpose:
+   - Verify that external commands are located and executed correctly.
+
+   Tests:
+   - Run echo with one argument and multiple arguments. Verify output matches.
+   - Run pwd and verify it prints the current working directory.
+   - Run a command using an absolute path such as /bin/echo. Verify output.
+   - Run a bare command name such as ls. Verify the program is found via path search.
+
+   Test files: test_basic.sh, test_path.sh
+
+3. Built-in command tests
+   Purpose:
+   - Verify correct behavior of cd, pwd, which, and exit.
+
+   Tests:
+   a. cd
+      - cd with no arguments changes to $HOME.
+      - cd with one argument changes to the specified directory.
+      - cd with too many arguments prints an error and fails.
+      - cd to a nonexistent directory prints an error and fails.
+      - Verify using pwd after cd that the directory actually changed.
+
+   b. pwd
+      - pwd prints the current working directory.
+      - pwd after cd prints the updated directory.
+
+   c. which
+      - which ls prints the path to ls.
+      - which cat prints the path to cat.
+      - which cd prints nothing and fails because cd is a builtin.
+      - which with a nonexistent program prints nothing and fails.
+
+   d. exit
+      - exit stops execution. Commands after exit are not run.
+      - exit in a pipeline terminates the shell after the pipeline completes.
+
+   Test files: test_cd.sh, test_which.sh, test_exit.sh
+
+4. I/O redirection tests
+   Purpose:
+   - Verify that < and > correctly redirect standard input and output.
+
+   Tests:
+   - Output redirection: echo text > file, then cat the file and verify contents.
+   - Output redirection truncates existing files.
+   - Input redirection: echo text to a file, then cat < file and verify contents.
+   - Both redirections in one command: echo text < /dev/null > file.
+   - Redirections work in either order (> before < and < before >).
+   - Redirecting to an invalid path produces an error message.
+
+   Test file: test_redirect.sh
+
+5. Pipeline tests
+   Purpose:
+   - Verify that | correctly connects standard output of one process to standard input of the next.
+
+   Tests:
+   - Simple two-command pipe: echo hello | cat.
+   - Three-command pipeline: echo hello | cat | cat.
+   - Pipeline with grep: echo hello world | grep hello.
+   - Four-command pipeline: echo text | cat | cat | cat.
+   - Pipeline exit status is determined by the last command.
+
+   Test file: test_pipe.sh
+
+6. Comment tests
+   Purpose:
+   - Verify that # begins a comment and the rest of the line is ignored.
+
+   Tests:
+   - A line containing only a comment is treated as empty.
+   - An indented comment line is treated as empty.
+   - A command followed by a comment executes the command and ignores the comment.
+
+   Test file: test_comments.sh
+
+7. Wildcard expansion tests
+   Purpose:
+   - Verify that tokens containing * are expanded to matching file names.
+
+   Tests:
+   - echo *.c in the project directory expands to all .c files.
+   - A pattern that matches nothing is passed through unchanged.
+   - A pattern like shell.* matches files with different extensions.
+   - Patterns with a directory prefix such as subdir/*.txt expand correctly.
+   - Patterns beginning with * do not match hidden files (names starting with .).
+   - Matches are sorted in lexicographic order.
+
+   Test file: test_wildcard.sh
+
+8. Error handling and recovery tests
+   Purpose:
+   - Verify that the shell continues after errors and does not crash.
+
+   Tests:
+   - Syntax error "< <" prints an error and the shell continues to the next command.
+   - Syntax error "| echo" prints an error and the shell continues.
+   - cd to a nonexistent directory prints an error and the shell continues.
+   - cd with too many arguments prints an error and the shell continues.
+   - A nonexistent command prints "command not found" and the shell continues.
+   - mysh exits with EXIT_SUCCESS after any of these errors.
+
+   Test file: test_errors.sh
+
+9. Interactive mode tests (manual)
+   Purpose:
+   - Verify interactive-specific behavior that cannot easily be tested in batch mode.
+
+   Tests:
+   - Welcome message prints on startup.
+   - Goodbye message prints on exit command.
+   - Goodbye message prints on Ctrl-D (end of input).
+   - Prompt shows the current working directory with ~ substitution for the home directory.
+   - After a command exits with non-zero status, "Exited with status N" is printed.
+   - After a command is killed by a signal, "Terminated by signal N (description)" is printed.
+
+10. Batch mode tests
+    Purpose:
+    - Verify batch mode behavior for both file arguments and piped input.
+
+    Tests:
+    - Run ./mysh tests/test_basic.sh and verify correct output with no prompts or messages.
+    - Run cat tests/test_basic.sh | ./mysh and verify identical output.
+    - Verify that no welcome message, goodbye message, or prompts appear in batch mode.
+
+11. Edge case tests
+    Purpose:
+    - Verify robustness for unusual but valid inputs.
+
+    Tests:
+    - Empty input line produces no output and the shell continues.
+    - Line containing only whitespace is treated as empty.
+    - Very long command line to verify dynamic buffer resizing.
+    - Command with extra whitespace between tokens.
+    - Empty file as batch input.
+
+Summary of Test Coverage
+Our testing covered:
+- compilation and clean targets
+- basic command execution with path search and absolute paths
+- all four built-in commands with valid and invalid arguments
+- input redirection, output redirection, and both combined
+- pipelines with two, three, and four stages
+- comment handling for full-line and inline comments
+- wildcard expansion with matches, no matches, directory prefixes, and hidden files
+- syntax error detection and recovery
+- interactive mode prompts, messages, and exit status reporting
+- batch mode with file arguments and piped input
+- edge cases including empty lines, long lines, and extra whitespace
+
+Partner Contributions
+James:
+- planning data structures and control flow
+- implementing command execution and pipeline management
+- implementing wildcard expansion
+Josh:
+- implementing tokenizer and parser
+- writing and refining the Makefile
+- testing and debugging
